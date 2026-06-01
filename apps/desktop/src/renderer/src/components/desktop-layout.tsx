@@ -13,8 +13,9 @@ import { ModalRegistry } from "@multica/views/modals/registry";
 import { AppSidebar } from "@multica/views/layout";
 import { SearchCommand, SearchTrigger } from "@multica/views/search";
 import { ChatFab, ChatWindow } from "@multica/views/chat";
-import { WorkspaceSlugProvider } from "@multica/core/paths";
+import { WorkspaceSlugProvider, paths, useCurrentWorkspace } from "@multica/core/paths";
 import { getCurrentSlug, subscribeToCurrentSlug } from "@multica/core/platform";
+import { useDesktopUnreadBadge } from "@multica/views/platform";
 import { DesktopNavigationProvider } from "@/platform/navigation";
 import { TabBar } from "./tab-bar";
 import { TabContent } from "./tab-content";
@@ -33,6 +34,7 @@ function SidebarTopBar() {
         style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       >
         <button
+          type="button"
           onClick={goBack}
           disabled={!canGoBack}
           aria-label="Go back"
@@ -41,6 +43,7 @@ function SidebarTopBar() {
           <ChevronLeft className="size-4" />
         </button>
         <button
+          type="button"
           onClick={goForward}
           disabled={!canGoForward}
           aria-label="Go forward"
@@ -51,6 +54,20 @@ function SidebarTopBar() {
       </div>
     </div>
   );
+}
+
+function useNativeNavigationGestures() {
+  const { goBack, goForward } = useTabHistory();
+
+  useEffect(() => {
+    return window.desktopAPI.onNavigationGesture((gesture) => {
+      if (gesture === "back") {
+        goBack();
+      } else {
+        goForward();
+      }
+    });
+  }, [goBack, goForward]);
 }
 
 // The main area's top bar doubles as a window drag region. When the sidebar
@@ -96,9 +113,42 @@ function useInternalLinkHandler() {
   }, []);
 }
 
+/**
+ * Bridge between the renderer and the Electron main process for inbox-level
+ * OS integration. Mounted inside WorkspaceSlugProvider so it can resolve the
+ * current workspace's id for the badge hook.
+ *
+ * Two responsibilities:
+ *   1. Mirror the unread inbox count onto the dock/taskbar badge.
+ *   2. When the user clicks an OS notification, open the notified
+ *      workspace's inbox focused on that item. The route uses the `slug`
+ *      that the notification was *emitted* with — not the currently active
+ *      workspace — so a notification from workspace A always opens A's
+ *      inbox even if the user has since switched to workspace B. Marking
+ *      the row read is handled by InboxPage's selected-item effect, which
+ *      covers both click-to-select and URL-param-select paths.
+ */
+function DesktopInboxBridge() {
+  const workspace = useCurrentWorkspace();
+  useDesktopUnreadBadge(workspace?.id ?? null);
+
+  useEffect(() => {
+    return window.desktopAPI.onInboxOpen(({ slug, issueKey }) => {
+      if (!slug) return;
+      const inboxPath = `${paths.workspace(slug).inbox()}?issue=${encodeURIComponent(issueKey)}`;
+      window.dispatchEvent(
+        new CustomEvent("multica:navigate", { detail: { path: inboxPath } }),
+      );
+    });
+  }, []);
+
+  return null;
+}
+
 export function DesktopShell() {
   useInternalLinkHandler();
   useActiveTitleSync();
+  useNativeNavigationGestures();
 
   // Reactive read of current workspace slug from the platform singleton.
   // On first mount, slug is null until WorkspaceRouteLayout (inside the tab
@@ -117,6 +167,7 @@ export function DesktopShell() {
           users see the window-level overlay (new-workspace flow)
           triggered by IndexRedirect, not a route. */}
       <WorkspaceSlugProvider slug={slug}>
+        <DesktopInboxBridge />
         <div className="flex h-screen">
           <SidebarProvider className="flex-1">
             {slug && <AppSidebar topSlot={<SidebarTopBar />} searchSlot={<SearchTrigger />} />}

@@ -9,19 +9,55 @@ import type { RouteObject } from "react-router-dom";
 import { IssueDetailPage } from "./pages/issue-detail-page";
 import { ProjectDetailPage } from "./pages/project-detail-page";
 import { AutopilotDetailPage } from "./pages/autopilot-detail-page";
+import { SkillDetailPage } from "./pages/skill-detail-page";
+import { AgentDetailPage } from "./pages/agent-detail-page";
+import { MemberDetailPage } from "./pages/member-detail-page";
+import { RuntimeDetailPage } from "./pages/runtime-detail-page";
+import { AttachmentPreviewRoute } from "./pages/attachment-preview-page";
 import { IssuesPage } from "@multica/views/issues/components";
 import { ProjectsPage } from "@multica/views/projects/components";
+import { DashboardPage } from "@multica/views/dashboard";
 import { AutopilotsPage } from "@multica/views/autopilots/components";
 import { MyIssuesPage } from "@multica/views/my-issues";
-import { RuntimesPage } from "@multica/views/runtimes";
 import { SkillsPage } from "@multica/views/skills";
-import { DaemonRuntimeCard } from "./components/daemon-runtime-card";
-import { AgentsPage } from "@multica/views/agents";
+import { DesktopRuntimesPage } from "./components/desktop-runtimes-page";
+import { DesktopAgentsPage } from "./components/desktop-agents-page";
+import { SquadsPage, SquadDetailPage as SquadDetailPageView } from "@multica/views/squads/components";
 import { InboxPage } from "@multica/views/inbox";
 import { SettingsPage } from "@multica/views/settings";
-import { Server } from "lucide-react";
+import { useT } from "@multica/views/i18n";
+import { ErrorBoundary } from "@multica/ui/components/common/error-boundary";
+import { Download, Server } from "lucide-react";
 import { DaemonSettingsTab } from "./components/daemon-settings-tab";
+import { UpdatesSettingsTab } from "./components/updates-settings-tab";
 import { WorkspaceRouteLayout } from "./components/workspace-route-layout";
+
+/**
+ * Wraps `SettingsPage` so the desktop-only extra tabs can pull their labels
+ * from i18n. The route element has to be a component (not a literal JSX
+ * value) for `useT` to run.
+ */
+function DesktopSettingsRoute() {
+  const { t } = useT("settings");
+  return (
+    <SettingsPage
+      extraAccountTabs={[
+        {
+          value: "daemon",
+          label: "Daemon",
+          icon: Server,
+          content: <DaemonSettingsTab />,
+        },
+        {
+          value: "updates",
+          label: t(($) => $.desktop.tabs.updates),
+          icon: Download,
+          content: <UpdatesSettingsTab />,
+        },
+      ]}
+    />
+  );
+}
 
 /**
  * Sets document.title from the deepest matched route's handle.title.
@@ -80,7 +116,15 @@ export const appRoutes: RouteObject[] = [
         element: <WorkspaceRouteLayout />,
         children: [
           { index: true, element: <Navigate to="issues" replace /> },
-          { path: "issues", element: <IssuesPage />, handle: { title: "Issues" } },
+          {
+            path: "issues",
+            element: (
+              <ErrorBoundary>
+                <IssuesPage />
+              </ErrorBoundary>
+            ),
+            handle: { title: "Issues" },
+          },
           {
             path: "issues/:id",
             element: <IssueDetailPage />,
@@ -113,26 +157,51 @@ export const appRoutes: RouteObject[] = [
           },
           {
             path: "runtimes",
-            element: <RuntimesPage topSlot={<DaemonRuntimeCard />} />,
+            element: <DesktopRuntimesPage />,
             handle: { title: "Runtimes" },
           },
+          {
+            path: "runtimes/:id",
+            element: <RuntimeDetailPage />,
+            handle: { title: "Runtime" },
+          },
           { path: "skills", element: <SkillsPage />, handle: { title: "Skills" } },
-          { path: "agents", element: <AgentsPage />, handle: { title: "Agents" } },
+          {
+            path: "skills/:id",
+            element: <SkillDetailPage />,
+            handle: { title: "Skill" },
+          },
+          { path: "agents", element: <DesktopAgentsPage />, handle: { title: "Agents" } },
+          {
+            path: "agents/:id",
+            element: <AgentDetailPage />,
+            handle: { title: "Agent" },
+          },
+          {
+            path: "members/:id",
+            element: <MemberDetailPage />,
+            handle: { title: "Member" },
+          },
+          { path: "squads", element: <SquadsPage />, handle: { title: "Squads" } },
+          {
+            path: "squads/:id",
+            element: <SquadDetailPageView />,
+            handle: { title: "Squad" },
+          },
           { path: "inbox", element: <InboxPage />, handle: { title: "Inbox" } },
           {
+            path: "attachments/:id/preview",
+            element: <AttachmentPreviewRoute />,
+            handle: { title: "Attachment" },
+          },
+          {
+            path: "usage",
+            element: <DashboardPage />,
+            handle: { title: "Usage" },
+          },
+          {
             path: "settings",
-            element: (
-              <SettingsPage
-                extraAccountTabs={[
-                  {
-                    value: "daemon",
-                    label: "Daemon",
-                    icon: Server,
-                    content: <DaemonSettingsTab />,
-                  },
-                ]}
-              />
-            ),
+            element: <DesktopSettingsRoute />,
             handle: { title: "Settings" },
           },
         ],

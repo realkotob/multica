@@ -1,14 +1,20 @@
 import * as React from 'react'
 import ReactMarkdown, { type Components, defaultUrlTransform } from 'react-markdown'
+import rehypeKatex from 'rehype-katex'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
+import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
 import { FileText, Download } from 'lucide-react'
 import { cn } from '@multica/ui/lib/utils'
+import { CODE_LIGATURE_CLASS } from '@multica/ui/lib/code-style'
 import { CodeBlock, InlineCode } from './CodeBlock'
-import { preprocessFileCards } from './file-cards'
+import { isAllowedFileCardHref, preprocessFileCards } from './file-cards'
 import { preprocessLinks } from './linkify'
 import { preprocessMentionShortcodes } from './mentions'
+import 'katex/dist/katex.min.css'
+import './markdown.css'
 
 /**
  * Render modes for markdown content:
@@ -55,6 +61,20 @@ export interface MarkdownProps {
    * When provided, enables file card preprocessing and rendering.
    */
   cdnDomain?: string
+  /**
+   * Optional override for the image renderer. When provided, replaces the
+   * default `<img>` with constrained sizing. The views-package wrapper uses
+   * this to inject the unified `<Attachment>` component so chat messages get
+   * the same hover toolbar / lightbox / preview-modal treatment as comments.
+   */
+  renderImage?: (props: { src: string; alt: string }) => React.ReactNode
+  /**
+   * Optional override for the file-card renderer. When provided, replaces
+   * the simplified card chrome (filename + download button) with whatever
+   * the caller supplies. Used the same way as `renderImage` to bridge into
+   * the views-package `<Attachment>` component.
+   */
+  renderFileCard?: (props: { href: string; filename: string }) => React.ReactNode
 }
 
 // Sanitization schema — extends GitHub defaults to allow code highlighting classes
@@ -76,6 +96,7 @@ const sanitizeSchema = {
     code: [
       ...(defaultSchema.attributes?.code ?? []),
       ['className', /^language-/],
+      ['className', /^math-/],
       ['className', /^hljs/],
     ],
     img: [
@@ -107,6 +128,8 @@ function createComponents(
   onUrlClick?: (url: string) => void,
   onFileClick?: (path: string) => void,
   renderMention?: (props: { type: string; id: string }) => React.ReactNode,
+  renderImage?: (props: { src: string; alt: string }) => React.ReactNode,
+  renderFileCard?: (props: { href: string; filename: string }) => React.ReactNode,
 ): Partial<Components> {
   const baseComponents: Partial<Components> = {
     // FileCard: intercept <div data-type="fileCard"> from preprocessFileCards
@@ -114,9 +137,11 @@ function createComponents(
       const dataType = node?.properties?.dataType as string | undefined
       if (dataType === 'fileCard') {
         const rawHref = (node?.properties?.dataHref as string) || ''
-        // Only allow http(s) URLs to prevent javascript: and other dangerous schemes.
-        const href = /^https?:\/\//i.test(rawHref) ? rawHref : ''
+        const href = isAllowedFileCardHref(rawHref) ? rawHref : ''
         const filename = (node?.properties?.dataFilename as string) || ''
+        if (renderFileCard) {
+          return <>{renderFileCard({ href, filename })}</>
+        }
         return (
           <div className="my-1 flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1 transition-colors hover:bg-muted">
             <FileText className="size-4 shrink-0 text-muted-foreground" />
@@ -138,14 +163,19 @@ function createComponents(
       return <div {...props}>{children}</div>
     },
     // Images: render uploaded images with constrained sizing
-    img: ({ src, alt }) => (
-      <img
-        src={src}
-        alt={alt ?? ""}
-        className="max-w-full h-auto rounded-md my-2"
-        loading="lazy"
-      />
-    ),
+    img: ({ src, alt }) => {
+      if (renderImage) {
+        return <>{renderImage({ src: typeof src === 'string' ? src : '', alt: alt ?? '' })}</>
+      }
+      return (
+        <img
+          src={src}
+          alt={alt ?? ""}
+          className="max-w-full h-auto rounded-md my-2"
+          loading="lazy"
+        />
+      )
+    },
     // Links: Make clickable with callbacks, or render as mention
     a: ({ href, children }) => {
       // Mention links: mention://member/id, mention://agent/id, mention://issue/id, mention://all/all
@@ -209,8 +239,12 @@ function createComponents(
     return {
       ...baseComponents,
       // No special code handling - just monospace
-      code: ({ children }) => <code className="font-mono">{children}</code>,
-      pre: ({ children }) => <pre className="font-mono whitespace-pre-wrap my-2">{children}</pre>,
+      code: ({ children }) => <code className={cn('font-mono', CODE_LIGATURE_CLASS)}>{children}</code>,
+      pre: ({ children }) => (
+        <pre className={cn('font-mono whitespace-pre-wrap my-2', CODE_LIGATURE_CLASS)}>
+          {children}
+        </pre>
+      ),
       // Minimal paragraph spacing
       p: ({ children }) => <p className="my-1">{children}</p>,
       // Simple lists
@@ -379,11 +413,13 @@ export function Markdown({
   onUrlClick,
   onFileClick,
   renderMention,
+  renderImage,
+  renderFileCard,
   cdnDomain
 }: MarkdownProps): React.JSX.Element {
   const components = React.useMemo(
-    () => createComponents(mode, onUrlClick, onFileClick, renderMention),
-    [mode, onUrlClick, onFileClick, renderMention]
+    () => createComponents(mode, onUrlClick, onFileClick, renderMention, renderImage, renderFileCard),
+    [mode, onUrlClick, onFileClick, renderMention, renderImage, renderFileCard]
   )
 
   // Preprocess: convert mention shortcodes, raw URLs, and file cards to renderable content
@@ -400,8 +436,8 @@ export function Markdown({
   return (
     <div className={cn('markdown-content break-words', className)}>
       <ReactMarkdown
-        remarkPlugins={[[remarkGfm, { singleTilde: false }]]}
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
+        remarkPlugins={[remarkMath, remarkBreaks, [remarkGfm, { singleTilde: false }]]}
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema], rehypeKatex]}
         urlTransform={urlTransform}
         components={components}
       >

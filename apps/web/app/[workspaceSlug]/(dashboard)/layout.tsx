@@ -10,7 +10,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     <DashboardLayout
       loadingIndicator={<MulticaIcon className="size-6" />}
       searchSlot={<SearchTrigger />}
-      extra={<><SearchCommand /><ChatWindow /><ChatFab /></>}
+      extra={
+        <>
+          <SearchCommand />
+          <ChatWindow />
+          <ChatFab />
+        </>
+      }
     >
       {children}
     </DashboardLayout>

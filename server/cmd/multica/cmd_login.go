@@ -32,11 +32,27 @@ var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Authenticate and set up workspaces",
 	Long:  "Log in to Multica, then automatically discover and watch all your workspaces.",
-	RunE:  runLogin,
+	// Up to one positional is accepted so `--token mul_...` / `--token mcn_...`
+	// (space form) can recover the token in runAuthLogin even though pflag
+	// won't bind it.
+	Args: cobra.MaximumNArgs(1),
+	RunE: runLogin,
 }
 
+// tokenPromptSentinel is the value pflag assigns to `--token` when the flag
+// is supplied without an explicit value. runAuthLoginToken treats it as
+// "prompt me interactively", preserving the legacy `multica login --token`
+// no-value form alongside the documented `--token mul_...` / `--token mcn_...`
+// value form.
+const tokenPromptSentinel = "\x00prompt"
+
 func init() {
-	loginCmd.Flags().Bool("token", false, "Authenticate by pasting a personal access token")
+	loginCmd.Flags().String("token", "", "Authenticate using a personal access token (`mul_...` user PAT or `mcn_...` Cloud Node PAT). Pass `--token mul_...` / `--token mcn_...` to supply it inline, or `--token` alone to be prompted interactively.")
+	// NoOptDefVal lets `--token` (no value) keep its old prompt-mode behavior
+	// while `--token mul_...` / `--token mcn_...` and the `=value` form
+	// consume the value normally.
+	loginCmd.Flags().Lookup("token").NoOptDefVal = tokenPromptSentinel
+	loginCmd.Flags().String(callbackHostFlag, "", "Host the OAuth callback URL points at (auto-detected from the server's route when empty). Use this for reverse-proxy / FQDN setups where auto-detection picks the wrong interface.")
 }
 
 func runLogin(cmd *cobra.Command, args []string) error {
@@ -104,7 +120,14 @@ func autoWatchWorkspaces(cmd *cobra.Command) error {
 
 	fmt.Fprintf(os.Stderr, "\nFound %d workspace(s):\n", len(workspaces))
 	for _, ws := range workspaces {
-		fmt.Fprintf(os.Stderr, "  • %s (%s)\n", ws.Name, ws.ID)
+		marker := "  "
+		if ws.ID == cfg.WorkspaceID {
+			marker = "* "
+		}
+		fmt.Fprintf(os.Stderr, "%s%s (%s)\n", marker, ws.Name, ws.ID)
+	}
+	if len(workspaces) > 1 {
+		fmt.Fprintln(os.Stderr, "\nUse 'multica workspace switch <id|slug>' to change the default workspace.")
 	}
 
 	return nil

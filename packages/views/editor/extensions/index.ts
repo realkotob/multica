@@ -16,7 +16,7 @@
  * Mention suggestion is only attached in edit mode — readonly doesn't need
  * the autocomplete popup.
  *
- * All link styling is controlled by content-editor.css (var(--brand) color),
+ * All link styling is controlled by styles/prose.css (var(--brand) color),
  * not Tailwind HTMLAttributes, to keep a single source of truth.
  */
 import type { RefObject } from "react";
@@ -38,24 +38,23 @@ import type { UploadResult } from "@multica/core/hooks/use-file-upload";
 import { BaseMentionExtension } from "./mention-extension";
 import { createMentionSuggestion } from "./mention-suggestion";
 import { CodeBlockView } from "./code-block-view";
+import { PatchedListItem } from "./list-item";
 import { createMarkdownPasteExtension } from "./markdown-paste";
+import { createMarkdownCopyExtension } from "./markdown-copy";
 import { createSubmitExtension } from "./submit-shortcut";
+import { createBlurShortcutExtension } from "./blur-shortcut";
 import { createFileUploadExtension } from "./file-upload";
 import { FileCardExtension } from "./file-card";
 import { ImageView } from "./image-view";
+import { BlockMathExtension, InlineMathExtension } from "./math";
 
 const lowlight = createLowlight(common);
 
-const LinkEditable = Link.extend({ inclusive: false }).configure({
+const LinkExtension = Link.extend({ inclusive: false }).configure({
   openOnClick: false,
   autolink: true,
   linkOnPaste: true,
   defaultProtocol: "https",
-});
-
-const LinkReadonly = Link.configure({
-  openOnClick: false,
-  autolink: false,
 });
 
 const ImageExtension = Image.extend({
@@ -79,7 +78,6 @@ const ImageExtension = Image.extend({
 });
 
 export interface EditorExtensionsOptions {
-  editable: boolean;
   placeholder?: string;
   queryClient?: import("@tanstack/react-query").QueryClient;
   onSubmitRef?: RefObject<(() => void) | undefined>;
@@ -88,19 +86,34 @@ export interface EditorExtensionsOptions {
   >;
   /** When true, bare Enter also submits (chat-style). Default false. */
   submitOnEnter?: boolean;
+  /**
+   * When true, the `@` suggestion picker is not attached. The mention node
+   * type is still registered in the schema so any mention pasted in from
+   * another Multica editor renders as the normal mention pill instead of
+   * being silently dropped by ProseMirror's schema check. Use for editors
+   * where *creating* a new mention has no business meaning (e.g. agent
+   * system prompts) but *preserving* an existing one still matters.
+   */
+  disableMentions?: boolean;
 }
 
 export function createEditorExtensions(
   options: EditorExtensionsOptions,
 ): AnyExtension[] {
-  const { editable, placeholder: placeholderText } = options;
+  const { placeholder: placeholderText } = options;
 
-  const extensions: AnyExtension[] = [
+  return [
     StarterKit.configure({
       heading: { levels: [1, 2, 3] },
       link: false,
       codeBlock: false,
+      // Disable StarterKit's stock ListItem — its Enter keybind binds only
+      // `splitListItem`, which leaves the user stuck inside an empty top-level
+      // list item (see list-item.ts). PatchedListItem below restores the
+      // standard split → lift fallback chain.
+      listItem: false,
     }),
+    PatchedListItem,
     CodeBlockLowlight.extend({
       addNodeView() {
         return ReactNodeViewRenderer(CodeBlockView);
@@ -109,37 +122,41 @@ export function createEditorExtensions(
     // ⚠️ Link MUST appear before markdownPaste in this array.
     // linkOnPaste relies on Link's handlePaste plugin firing first;
     // markdownPaste's handlePaste is a catch-all that returns true.
-    editable ? LinkEditable : LinkReadonly,
+    LinkExtension,
     ImageExtension,
     Table.configure({ resizable: false }),
     TableRow,
     TableHeader,
     TableCell,
-    Markdown,
+    BlockMathExtension,
+    InlineMathExtension,
+    // 3-space indent so nested ordered lists survive CommonMark in ReadonlyContent.
+    Markdown.configure({ indentation: { style: "space", size: 3 } }),
+    // Make Cmd+C / Cmd+X / drag write Markdown source to clipboard text/plain
+    // so users can copy rich content out as the original Markdown.
+    createMarkdownCopyExtension(),
     FileCardExtension,
     BaseMentionExtension.configure({
       HTMLAttributes: { class: "mention" },
-      ...(editable && options.queryClient ? { suggestion: createMentionSuggestion(options.queryClient) } : {}),
+      ...(options.disableMentions
+        ? { suggestion: { allow: () => false } }
+        : options.queryClient
+          ? { suggestion: createMentionSuggestion(options.queryClient) }
+          : {}),
     }),
+    Typography,
+    Placeholder.configure({ placeholder: placeholderText }),
+    createMarkdownPasteExtension(),
+    createSubmitExtension(
+      () => {
+        const fn = options.onSubmitRef?.current;
+        if (!fn) return false; // no submit wired — let default Enter insert newline
+        fn();
+        return true;
+      },
+      { submitOnEnter: options.submitOnEnter ?? false },
+    ),
+    createBlurShortcutExtension(),
+    createFileUploadExtension(options.onUploadFileRef!),
   ];
-
-  if (editable) {
-    extensions.push(
-      Typography,
-      Placeholder.configure({ placeholder: placeholderText }),
-      createMarkdownPasteExtension(),
-      createSubmitExtension(
-        () => {
-          const fn = options.onSubmitRef?.current;
-          if (!fn) return false; // no submit wired — let default Enter insert newline
-          fn();
-          return true;
-        },
-        { submitOnEnter: options.submitOnEnter ?? false },
-      ),
-      createFileUploadExtension(options.onUploadFileRef!),
-    );
-  }
-
-  return extensions;
 }
